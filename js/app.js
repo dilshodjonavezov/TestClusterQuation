@@ -508,8 +508,8 @@ async function submitSurvey() {
         showThankYou();
     } catch (error) {
         console.error('Error submitting survey:', error);
-        alert('Ошибка при отправке. Данные сохранены локально.');
-        showThankYou();
+        alert('Критическая ошибка при отправке в базу данных! Проверьте настройки Firebase (Security Rules). Данные НЕ сохранены в облаке.');
+        // Не вызываем showThankYou(), чтобы пользователь видел, что отправка не удалась
     }
 }
 
