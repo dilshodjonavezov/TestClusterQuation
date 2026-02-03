@@ -14,4 +14,5 @@ export const firebaseConfig = {
 export const adminCredentials = {
     email: "admin@testcluster.com",
     password: "admin123"
+    
 };

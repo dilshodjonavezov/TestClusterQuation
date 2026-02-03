@@ -487,7 +487,7 @@ export const studentQuestions = [
                 ]
             },
             uz: {
-                question: "Ilgari ta'limiy mobil ilovalardan foydalanganmisiz?",
+                question: "Ilgari ta'limiy mobil ilovalardan foydanlanaganmisiz?",
                 options: [
                     'Ha, tez-tez foydalanaman',
                     'Ha, bazan',
