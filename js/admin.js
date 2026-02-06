@@ -1,6 +1,8 @@
 // Admin Panel Logic
 import { firebaseConfig, adminCredentials } from './config.js';
 import { translations, t } from './translations.js';
+import { studentQuestions } from './questions-students.js';
+import { teacherQuestions } from './questions-teachers.js';
 
 let isLoggedIn = false;
 let surveysData = [];
@@ -235,6 +237,11 @@ function renderDashboard() {
                                 <i class="fas fa-download mr-2"></i>
                                 Экспорт в CSV
                             </button>
+                            <button onclick="window.admin.exportToExcel()" 
+                                class="flex-1 bg-emerald-600 text-white py-2 px-4 rounded-lg hover:bg-emerald-700 transition">
+                                <i class="fas fa-file-excel mr-2"></i>
+                                Экспорт в Excel
+                            </button>
                             <button onclick="window.admin.resetFilters()" 
                                 class="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition">
                                 <i class="fas fa-redo mr-2"></i>
@@ -359,11 +366,13 @@ function viewDetails(survey) {
         if (e.target === modal) modal.remove();
     };
 
-    const answersHtml = Object.entries(survey.answers).map(([key, value]) => {
+    const questionMap = getQuestionTextMap(survey.role, survey.language);
+    const answersHtml = getSortedAnswerEntries(survey).map(([key, value]) => {
         const displayValue = Array.isArray(value) ? value.join(', ') : value;
+        const questionText = questionMap[key] || key;
         return `
             <div class="mb-4">
-                <p class="font-medium text-gray-700 mb-1">${key}:</p>
+                <p class="font-medium text-gray-700 mb-1">${questionText}:</p>
                 <p class="text-gray-600">${displayValue || 'Нет ответа'}</p>
             </div>
         `;
@@ -434,6 +443,7 @@ function exportToCSV() {
     }
 
     const csvData = filteredData.map(survey => {
+        const questionMap = getQuestionTextMap(survey.role, 'ru');
         const flatData = {
             'Дата': new Date(survey.timestamp).toLocaleString('ru-RU'),
             'Имя': survey.respondent.firstName,
@@ -455,8 +465,9 @@ function exportToCSV() {
         }
 
         // Add answers
-        Object.entries(survey.answers).forEach(([key, value]) => {
-            flatData[key] = Array.isArray(value) ? value.join('; ') : value;
+        getSortedAnswerEntries(survey).forEach(([key, value]) => {
+            const questionText = questionMap[key] || key;
+            flatData[questionText] = Array.isArray(value) ? value.join('; ') : value;
         });
 
         return flatData;
@@ -479,6 +490,105 @@ function exportToCSV() {
     document.body.removeChild(link);
 }
 
+function getQuestionTextMap(role, lang) {
+    const questions = role === 'student' ? studentQuestions : teacherQuestions;
+    const questionMap = {};
+
+    questions.forEach((question) => {
+        const translation = question.translations?.[lang] || question.translations?.ru || {};
+        const questionText = translation.question || `q${question.id}`;
+        questionMap[`q${question.id}`] = questionText;
+    });
+
+    return questionMap;
+}
+
+function getSortedAnswerEntries(survey) {
+    return Object.entries(survey.answers || {}).sort((a, b) => {
+        const aNum = getQuestionNumber(a[0]);
+        const bNum = getQuestionNumber(b[0]);
+        return aNum - bNum;
+    });
+}
+
+function getQuestionNumber(key) {
+    const match = /^q(\d+)$/.exec(key);
+    return match ? parseInt(match[1], 10) : Number.MAX_SAFE_INTEGER;
+}
+
+function exportToExcel() {
+    if (!window.XLSX) {
+        alert('Excel библиотека не загружена');
+        return;
+    }
+
+    if (filteredData.length === 0) {
+        alert('Нет данных для экспорта');
+        return;
+    }
+
+    const baseColumns = [
+        'Дата',
+        'Имя',
+        'Фамилия',
+        'Роль',
+        'Язык',
+        'Класс',
+        'Пол',
+        'Регион',
+        'Предмет',
+        'Стаж',
+        'Учреждение',
+        'Классы'
+    ];
+
+    const questionColumns = [];
+    const questionColumnSet = new Set();
+
+    filteredData.forEach((survey) => {
+        const questionMap = getQuestionTextMap(survey.role, 'ru');
+        getSortedAnswerEntries(survey).forEach(([key]) => {
+            const questionText = questionMap[key] || key;
+            if (!questionColumnSet.has(questionText)) {
+                questionColumnSet.add(questionText);
+                questionColumns.push(questionText);
+            }
+        });
+    });
+
+    const header = [...baseColumns, ...questionColumns];
+
+    const rows = filteredData.map((survey) => {
+        const questionMap = getQuestionTextMap(survey.role, 'ru');
+        const row = {
+            'Дата': new Date(survey.timestamp).toLocaleString('ru-RU'),
+            'Имя': survey.respondent.firstName,
+            'Фамилия': survey.respondent.lastName,
+            'Роль': survey.role,
+            'Язык': survey.language,
+            'Класс': survey.role === 'student' ? survey.respondent.grade : '',
+            'Пол': survey.role === 'student' ? survey.respondent.gender : '',
+            'Регион': survey.role === 'student' ? (survey.respondent.region || '') : '',
+            'Предмет': survey.role === 'teacher' ? survey.respondent.subject : '',
+            'Стаж': survey.role === 'teacher' ? survey.respondent.experience : '',
+            'Учреждение': survey.role === 'teacher' ? (survey.respondent.institution || '') : '',
+            'Классы': survey.role === 'teacher' ? (survey.respondent.grades?.join(', ') || '') : ''
+        };
+
+        getSortedAnswerEntries(survey).forEach(([key, value]) => {
+            const questionText = questionMap[key] || key;
+            row[questionText] = Array.isArray(value) ? value.join('; ') : value;
+        });
+
+        return row;
+    });
+
+    const worksheet = window.XLSX.utils.json_to_sheet(rows, { header });
+    const workbook = window.XLSX.utils.book_new();
+    window.XLSX.utils.book_append_sheet(workbook, worksheet, 'Survey Results');
+    window.XLSX.writeFile(workbook, `survey-results-${new Date().toISOString().split('T')[0]}.xlsx`);
+}
+
 function logout() {
     sessionStorage.removeItem('adminLoggedIn');
     isLoggedIn = false;
@@ -492,5 +602,6 @@ window.admin = {
     resetFilters,
     viewDetails,
     exportToCSV,
+    exportToExcel,
     logout
 };
