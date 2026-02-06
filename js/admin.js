@@ -821,3 +821,151 @@ window.admin = {
     resetAndSeed,
     logout
 };
+
+// Fixed exports with explicit headers and stable question order
+function getStudentQuestionHeadersFixed(lang) {
+    return studentQuestions.map((question) => {
+        const translation = question.translations?.[lang] || question.translations?.ru || {};
+        return translation.question || `q${question.id}`;
+    });
+}
+
+function exportToCSVFixed() {
+    if (!window.Papa) {
+        alert('CSV library not loaded');
+        return;
+    }
+
+    if (filteredData.length === 0) {
+        alert('No data to export');
+        return;
+    }
+
+    const questionHeaders = getStudentQuestionHeadersFixed('ru');
+    const header = [
+        'Дата',
+        'Имя',
+        'Отчество',
+        'Фамилия',
+        'Роль',
+        'Язык',
+        'Класс',
+        'Пол',
+        'Регион',
+        ...questionHeaders
+    ];
+
+    const rows = filteredData.map((survey) => {
+        const row = [
+            new Date(survey.timestamp).toLocaleString('ru-RU'),
+            survey.respondent.firstName,
+            survey.respondent.middleName || '',
+            survey.respondent.lastName,
+            survey.role,
+            survey.language,
+            survey.role === 'student' ? survey.respondent.grade : '',
+            survey.role === 'student' ? survey.respondent.gender : '',
+            survey.role === 'student' ? (survey.respondent.region || '') : ''
+        ];
+
+        questionHeaders.forEach((_, idx) => {
+            const qId = idx + 1;
+            const value = survey.answers?.[`q${qId}`];
+            row.push(Array.isArray(value) ? value.join('; ') : (value || ''));
+        });
+
+        return row;
+    });
+
+    const csv = window.Papa.unparse({ fields: header, data: rows }, { delimiter: ',' });
+
+    const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `survey-results-${new Date().toISOString().split('T')[0]}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
+
+function exportToExcelFixed() {
+    if (!window.XLSX) {
+        alert('Excel library not loaded');
+        return;
+    }
+
+    if (filteredData.length === 0) {
+        alert('No data to export');
+        return;
+    }
+
+    const questionHeaders = getStudentQuestionHeadersFixed('ru');
+    const header = [
+        'Дата',
+        'Имя',
+        'Отчество',
+        'Фамилия',
+        'Роль',
+        'Язык',
+        'Класс',
+        'Пол',
+        'Регион',
+        ...questionHeaders
+    ];
+
+    const rows = filteredData.map((survey) => {
+        const row = [
+            new Date(survey.timestamp).toLocaleString('ru-RU'),
+            survey.respondent.firstName,
+            survey.respondent.middleName || '',
+            survey.respondent.lastName,
+            survey.role,
+            survey.language,
+            survey.role === 'student' ? survey.respondent.grade : '',
+            survey.role === 'student' ? survey.respondent.gender : '',
+            survey.role === 'student' ? (survey.respondent.region || '') : ''
+        ];
+
+        questionHeaders.forEach((_, idx) => {
+            const qId = idx + 1;
+            const value = survey.answers?.[`q${qId}`];
+            row.push(Array.isArray(value) ? value.join('; ') : (value || ''));
+        });
+
+        return row;
+    });
+
+    const worksheet = window.XLSX.utils.aoa_to_sheet([header, ...rows]);
+    const workbook = window.XLSX.utils.book_new();
+    window.XLSX.utils.book_append_sheet(workbook, worksheet, 'Survey Results');
+    window.XLSX.writeFile(workbook, `survey-results-${new Date().toISOString().split('T')[0]}.xlsx`);
+}
+
+async function resetAndSeedFixed() {
+    if (!window.db) {
+        alert('Firebase not connected. Reset works only with Firestore.');
+        return;
+    }
+
+    const confirmed = confirm('This will delete ALL answers and create 110 students. Continue?');
+    if (!confirmed) return;
+
+    try {
+        const deleted = await deleteAllSurveys();
+        const surveys = generateStudentSurveys(110, { tjPercent: 80, ruPercent: 20 });
+        await seedSurveys(surveys);
+        await loadSurveys();
+        renderDashboard();
+        alert(`Done: deleted ${deleted}, created ${surveysData.length} (should be 110).`);
+    } catch (error) {
+        console.error('Reset/Seed error:', error);
+        alert(`Reset/seed error: ${error?.code || error?.message || error}`);
+    }
+}
+
+// Override old handlers
+window.admin.exportToCSV = exportToCSVFixed;
+window.admin.exportToExcel = exportToExcelFixed;
+window.admin.resetAndSeed = resetAndSeedFixed;
