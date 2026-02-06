@@ -40,9 +40,9 @@
     <!-- Firebase SDK -->
     <script type="module">
         import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
-        import { getFirestore, collection, getDocs, query, orderBy } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
+        import { getFirestore, collection, getDocs, query, orderBy, addDoc, deleteDoc, doc, writeBatch } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
 
-        window.firestoreHelpers = { collection, getDocs, query, orderBy };
+        window.firestoreHelpers = { collection, getDocs, query, orderBy, addDoc, deleteDoc, doc, writeBatch };
 
         // Initialize app
         import('./js/admin.js').then(module => {

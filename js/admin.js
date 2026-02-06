@@ -242,6 +242,11 @@ function renderDashboard() {
                                 <i class="fas fa-file-excel mr-2"></i>
                                 Экспорт в Excel
                             </button>
+                            <button onclick="window.admin.resetAndSeed()" 
+                                class="flex-1 bg-red-600 text-white py-2 px-4 rounded-lg hover:bg-red-700 transition">
+                                <i class="fas fa-trash mr-2"></i>
+                                Сброс и генерация
+                            </button>
                             <button onclick="window.admin.resetFilters()" 
                                 class="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition">
                                 <i class="fas fa-redo mr-2"></i>
@@ -297,7 +302,8 @@ function renderTableRows() {
 
     return filteredData.map(survey => {
         const date = new Date(survey.timestamp).toLocaleDateString('ru-RU');
-        const name = `${survey.respondent.firstName} ${survey.respondent.lastName}`;
+        const middleName = survey.respondent.middleName ? ` ${survey.respondent.middleName}` : '';
+        const name = `${survey.respondent.firstName}${middleName} ${survey.respondent.lastName}`;
         const role = survey.role === 'student' ? '👨‍🎓 Выпускник' : '👨‍🏫 Преподаватель';
         const langMap = { ru: '🇷🇺 РУ', tj: '🇹🇯 ТҶ', uz: '🇺🇿 УЗ' };
         const language = langMap[survey.language] || survey.language;
@@ -393,7 +399,7 @@ function viewDetails(survey) {
                 <div class="grid grid-cols-2 gap-4">
                     <div>
                         <p class="text-sm text-gray-500">Имя</p>
-                        <p class="font-medium">${survey.respondent.firstName} ${survey.respondent.lastName}</p>
+                        <p class="font-medium">${survey.respondent.firstName} ${survey.respondent.middleName || ''} ${survey.respondent.lastName}</p>
                     </div>
                     <div>
                         <p class="text-sm text-gray-500">Роль</p>
@@ -447,6 +453,7 @@ function exportToCSV() {
         const flatData = {
             'Дата': new Date(survey.timestamp).toLocaleString('ru-RU'),
             'Имя': survey.respondent.firstName,
+            'Отчество': survey.respondent.middleName || '',
             'Фамилия': survey.respondent.lastName,
             'Роль': survey.role,
             'Язык': survey.language,
@@ -530,6 +537,7 @@ function exportToExcel() {
     const baseColumns = [
         'Дата',
         'Имя',
+        'Отчество',
         'Фамилия',
         'Роль',
         'Язык',
@@ -563,6 +571,7 @@ function exportToExcel() {
         const row = {
             'Дата': new Date(survey.timestamp).toLocaleString('ru-RU'),
             'Имя': survey.respondent.firstName,
+            'Отчество': survey.respondent.middleName || '',
             'Фамилия': survey.respondent.lastName,
             'Роль': survey.role,
             'Язык': survey.language,
@@ -589,6 +598,212 @@ function exportToExcel() {
     window.XLSX.writeFile(workbook, `survey-results-${new Date().toISOString().split('T')[0]}.xlsx`);
 }
 
+async function resetAndSeed() {
+    if (!window.db) {
+        alert('Firebase не подключен. Сброс доступен только при работе с Firestore.');
+        return;
+    }
+
+    const confirmed = confirm('Это удалит ВСЕ ответы и создаст 110 новых учеников. Продолжить?');
+    if (!confirmed) return;
+
+    try {
+        await deleteAllSurveys();
+        const surveys = generateStudentSurveys(110, { tjPercent: 80, ruPercent: 20 });
+        await seedSurveys(surveys);
+        await loadSurveys();
+        renderDashboard();
+        alert('Готово: база очищена и заполнена 110 учениками.');
+    } catch (error) {
+        console.error('Reset/Seed error:', error);
+        alert('Ошибка при сбросе/генерации. Подробности в консоли.');
+    }
+}
+
+async function deleteAllSurveys() {
+    const { collection, getDocs, writeBatch, doc } = window.firestoreHelpers;
+    const colRef = collection(window.db, 'surveys');
+    const snapshot = await getDocs(colRef);
+
+    if (snapshot.empty) return 0;
+
+    const batches = [];
+    let batch = writeBatch(window.db);
+    let batchCount = 0;
+    let deleted = 0;
+
+    snapshot.forEach((docSnap) => {
+        batch.delete(doc(window.db, 'surveys', docSnap.id));
+        batchCount++;
+        deleted++;
+
+        if (batchCount >= 450) {
+            batches.push(batch);
+            batch = writeBatch(window.db);
+            batchCount = 0;
+        }
+    });
+
+    if (batchCount > 0) {
+        batches.push(batch);
+    }
+
+    for (const b of batches) {
+        await b.commit();
+    }
+
+    return deleted;
+}
+
+async function seedSurveys(surveys) {
+    const { collection, writeBatch, doc } = window.firestoreHelpers;
+    const colRef = collection(window.db, 'surveys');
+
+    let batch = writeBatch(window.db);
+    let batchCount = 0;
+
+    for (const survey of surveys) {
+        const docRef = doc(colRef);
+        batch.set(docRef, survey);
+        batchCount++;
+
+        if (batchCount >= 450) {
+            await batch.commit();
+            batch = writeBatch(window.db);
+            batchCount = 0;
+        }
+    }
+
+    if (batchCount > 0) {
+        await batch.commit();
+    }
+}
+
+function generateStudentSurveys(count, { tjPercent = 80, ruPercent = 20 } = {}) {
+    const tjCount = Math.round((count * tjPercent) / 100);
+    const ruCount = count - tjCount;
+
+    const languages = [
+        ...Array(tjCount).fill('tj'),
+        ...Array(ruCount).fill('ru')
+    ];
+
+    shuffleArray(languages);
+
+    return languages.map((lang) => createStudentSurvey(lang));
+}
+
+function createStudentSurvey(lang) {
+    const gender = Math.random() < 0.5 ? 'М' : 'Ж';
+    const firstName = gender === 'М'
+        ? randomFromArray(TAJIK_FIRST_NAMES_MALE)
+        : randomFromArray(TAJIK_FIRST_NAMES_FEMALE);
+    const lastName = randomFromArray(TAJIK_LAST_NAMES);
+    const middleName = createPatronymic(gender);
+
+    const respondent = {
+        firstName,
+        middleName,
+        lastName,
+        grade: 11,
+        gender,
+        region: 'Бабаджан Гафуровский район, Джамоати Хистеварз, школа №5'
+    };
+
+    const answers = {};
+
+    studentQuestions.forEach((question) => {
+        const translation = question.translations?.[lang] || question.translations?.ru;
+        if (!translation) return;
+
+        const options = translation.options || [];
+
+        if (question.type === 'single') {
+            answers[`q${question.id}`] = randomFromArray(options);
+        } else if (question.type === 'multiple') {
+            const max = question.maxselect || Math.min(3, options.length);
+            const min = 1;
+            const count = Math.max(min, Math.floor(Math.random() * max) + 1);
+            answers[`q${question.id}`] = pickRandomUnique(options, count);
+        } else if (question.type === 'textarea') {
+            answers[`q${question.id}`] = createFreeTextAnswer(lang);
+        } else {
+            answers[`q${question.id}`] = '';
+        }
+    });
+
+    return {
+        timestamp: randomRecentDate(30),
+        language: lang,
+        role: 'student',
+        respondent,
+        answers
+    };
+}
+
+function randomRecentDate(daysBack) {
+    const now = Date.now();
+    const offset = Math.floor(Math.random() * daysBack * 24 * 60 * 60 * 1000);
+    return new Date(now - offset);
+}
+
+function randomFromArray(list) {
+    return list[Math.floor(Math.random() * list.length)];
+}
+
+function pickRandomUnique(list, count) {
+    const copy = [...list];
+    shuffleArray(copy);
+    return copy.slice(0, Math.min(count, copy.length));
+}
+
+function shuffleArray(arr) {
+    for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+}
+
+function createPatronymic(gender) {
+    const base = randomFromArray(TAJIK_PATRONYMIC_BASES);
+    return gender === 'М' ? `${base}ович` : `${base}овна`;
+}
+
+function createFreeTextAnswer(lang) {
+    const ru = [
+        'Хотел(а) бы больше тестов и понятные объяснения.',
+        'Важно, чтобы приложение было простым и полезным.',
+        'Было бы хорошо добавить больше примеров и задач.'
+    ];
+    const tj = [
+        'Мехоҳам, ки барнома содда ва фоидаовар бошад.',
+        'Бисёр хуб мешуд, агар саволҳо бештар бошанд.',
+        'Идеяҳо ва пешниҳодҳо барои беҳтар кардан дорам.'
+    ];
+
+    return randomFromArray(lang === 'tj' ? tj : ru);
+}
+
+const TAJIK_FIRST_NAMES_MALE = [
+    'Абдулло', 'Азиз', 'Бахтиёр', 'Бехруз', 'Далер', 'Джамшед', 'Джовид', 'Фирдавс', 'Искандар', 'Комрон',
+    'Мухаммад', 'Нозим', 'Парвиз', 'Рустам', 'Сухроб', 'Умед', 'Фаррух', 'Хайриддин', 'Шахзод', 'Эмомали'
+];
+
+const TAJIK_FIRST_NAMES_FEMALE = [
+    'Азиза', 'Бахора', 'Гулноза', 'Дилноза', 'Зулфия', 'Зебо', 'Мавзуна', 'Мадина', 'Мехрона', 'Муниса',
+    'Нигина', 'Нодира', 'Нозия', 'Ойша', 'Рухшона', 'Сайёра', 'Ситора', 'Фарангис', 'Шахло', 'Юлдуз'
+];
+
+const TAJIK_LAST_NAMES = [
+    'Абдуллоев', 'Азизов', 'Бахтиёров', 'Далеров', 'Джамшедов', 'Джураев', 'Каримов', 'Кодиров', 'Комилов', 'Мамадов',
+    'Назаров', 'Нуров', 'Рахмонов', 'Саидов', 'Султонов', 'Темуров', 'Умаров', 'Файзиев', 'Хайриддинов', 'Юсуфов'
+];
+
+const TAJIK_PATRONYMIC_BASES = [
+    'Абдулло', 'Азиз', 'Бахтиёр', 'Далер', 'Джамшед', 'Фирдавс', 'Искандар', 'Комрон', 'Мухаммад', 'Парвиз',
+    'Рустам', 'Сухроб', 'Умед', 'Фаррух', 'Шахзод'
+];
+
 function logout() {
     sessionStorage.removeItem('adminLoggedIn');
     isLoggedIn = false;
@@ -603,5 +818,6 @@ window.admin = {
     viewDetails,
     exportToCSV,
     exportToExcel,
+    resetAndSeed,
     logout
 };
